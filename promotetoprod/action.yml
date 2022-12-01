@@ -1,0 +1,22 @@
+--- 
+name: promotetoprod
+description: "Given a aap-gcpdm-standalone snapshot, copy it from one account to another"
+inputs: 
+  snapshot_path: 
+    default: "artifacts/snapshots/SNAPSHOT-2021-08-01-19-23-28"
+    description: "Path to snapshot to promote"
+    required: true
+  snapshot_date: 
+    default: "2021-08-01-19-23-28"
+    description: "Just the date portion of the snapshot"
+    required: true
+  log_filename:
+    default: "promotetoprod.log"
+    required: false
+
+outputs: 
+  log: 
+    description: "Transcript of promotion actions"
+runs: 
+  image: Dockerfile
+  using: docker
