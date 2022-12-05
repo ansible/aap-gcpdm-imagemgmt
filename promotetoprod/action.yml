@@ -10,9 +10,10 @@ inputs:
     default: "2021-08-01-19-23-28"
     description: "Just the date portion of the snapshot"
     required: true
-  log_filename:
-    default: "promotetoprod.log"
-    required: false
+  gcp_prod_storage_bucket:
+    default: ""
+    description: "The GCP storage bucket for production zip files"
+    required: true
 
 outputs: 
   log: 

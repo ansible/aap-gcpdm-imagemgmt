@@ -1,5 +1,4 @@
 import os
-import boto3
 import json
 from io import StringIO
 import sys
@@ -18,42 +17,60 @@ def env_set(env_var, default):
         return default
 
 
-def moveS3s(snapshot_path, snapshot_date, dev_region, prod_region, prod_bucket):
+def gatherAssets(snapshot_path, snapshot_date):
     return_code = False
-    dev_session = boto3.Session(profile_name="dev", region_name=dev_region)
-    prod_session = boto3.Session(profile_name="prod", region_name=prod_region)
     resource_map = {}
-    try:
-        with open("{}/resources-{}.json".format(snapshot_path, snapshot_date), "r") as s3_file:
-            resource_text = s3_file.read()
-            resource_map = json.loads(resource_text)
-        s3_files = resource_map["s3_files"]
-        dev_client = dev_session.client("s3")
-        prod_client = prod_session.client("s3")
-        for entry in s3_files:
-            if "{}/".format(dev_region) in entry:
-                # Break up an S3 URI into usable bits i.e.
-                # s3://positronic-asimov-us-west-2/cdk/template-development-2022-07-12-10-44-52.json
-                #   bucket --> positronic-asimov-us-west-2
-                #      obj --> cdk/template-development-2022-07-12-10-44-52.json
-                parts = entry.split("s3://")
-                bucket = parts[1].split("/")[0]
-                start = len(bucket) + entry.find(bucket) + 1
-                obj = entry[start:]
-                file = obj.split("/")[1]
-                dev_client.download_file(bucket, obj, file)
-                print("Downloaded {} from {}".format(obj, bucket))
-                prod_client.upload_file(file, prod_bucket, obj)
-                print("Uploaded {} to {}".format(obj, prod_bucket))
+    image_name = ""
+    for dirname in next(os.walk(snapshot_path))[1]:
+        object_storage = ""
+        account_copied_to = ""
+        account_destined_for = ""
+        try:
+            full_path="{}/{}/gcp-machine-image-manifest.json".format(snapshot_path,dirname)
+            with open(full_path, "r") as a_file:
+                resource_text = a_file.read()
+                resource_map = json.loads(resource_text)
+                image_name = resource_map["builds"][0]["artifact_id"]
+            # print("full_path: {}".format(full_path))
+        except:
+            try:
+                full_path="{}/{}/gcp-machine-image-manifest_{}.json".format(snapshot_path,dirname,snapshot_date)
+                with open(full_path, "r") as a_file:
+                    resource_text = a_file.read()
+                    resource_map = json.loads(resource_text)
+                    image_name = resource_map["builds"][0]["artifact_id"]
+                # print("full_path: {}".format(full_path))
+            except:
+                print("Didn't find the image created in {}/{}!".format(snapshot_path,dirname))
+        try:
+            full_path="{}/{}/gcp_project_id.txt".format(snapshot_path,dirname)
+            with open(full_path, "r") as a_file:
+                account_copied_to = a_file.read().strip()
+            # print("    sub-build {} account copied to: {}".format(dirname,account_copied_to))
+        except:
+            account_copied_to = 'gc-ansible-cloud'
+            print("Didn't find the gcp project stuff for sub-build {}, assuming '{}'".format(dirname,account_copied_to))
+        try:
+            full_path="{}/{}/destination_project_id.txt".format(snapshot_path,dirname)
+            with open(full_path, "r") as a_file:
+                account_destined_for = a_file.read().strip()
+            # print("account destined for: {}".format(account_destined_for))
+        except:
+            print("Didn't find the destination gcp project ID for sub-build {}, assuming {}".format(dirname,account_copied_to))
+            account_destined_for = account_copied_to
+        try:
+            full_path="{}/{}/object-storage.out".format(snapshot_path,dirname)
+            with open(full_path, "r") as a_file:
+                object_storage = a_file.read().strip()
+            # print("account destined for: {}".format(account_destined_for))
+        except:
+            print("No object storage exists for sub-build {}.".format(dirname));
+        if (account_destined_for != account_copied_to) & (image_name != ""):
+            print("Copying sub-build {} image {} to {} since account_destined_for is {} and account_copied_to is {}.".format(dirname,image_name, account_destined_for,account_copied_to,account_destined_for))
+        if (account_destined_for != account_copied_to) & (object_storage != ""):
+            print("Copying sub-build {} zip   {} to {}".format(dirname,object_storage, account_destined_for))
         return_code = True
-    except:
-        print("Didn't find {}/resources-{}.json!".format(snapshot_path, snapshot_date))
     return return_code
-
-
-def loginS3Client():
-    client = boto3.client("s3")
-    return client
 
 
 def main():
@@ -64,26 +81,17 @@ def main():
     sys.stdout = string_stdout
 
     # Assumes a credentials file has been laid down thusly
-    os.environ["AWS_SHARED_CREDENTIALS_FILE"] = "{}/.aws/credentials".format(os.getcwd())
+    #os.environ["AWS_SHARED_CREDENTIALS_FILE"] = "{}/.aws/credentials".format(os.getcwd())
 
     # Prime the stdout pump - we seem to lose the first line otherwise
     print()
 
     snapshot_path = env_set("INPUT_SNAPSHOT_PATH", "")
     snapshot_date = env_set("INPUT_SNAPSHOT_DATE", "")
-    log_filename = env_set("INPUT_LOG_FILENAME", "prod-promote.log")
-    dev_region = env_set("INPUT_AWS_DEV_ENDPOINT_REGION", "us-east-2")
-    prod_region = env_set("INPUT_AWS_PROD_ENDPOINT_REGION", "us-east-2")
-    prod_s3_bucket = env_set("INPUT_AWS_PROD_S3_BUCKET", "aap-aoc-code-assets")
-    aws_creds_text = base64.b64decode(os.environ["INPUT_AWS_SHARED_CREDS_BASE64"]).decode("utf-8")
-    creds_path = "{}/.aws".format(os.getcwd())
-    os.mkdir(creds_path)
-    creds_file = "{}/credentials".format(creds_path)
-    with open(creds_file, "w") as out_file:
-        out_file.write(aws_creds_text)
-        out_file.close()
+    log_filename = env_set("INPUT_LOG_FILENAME", "promotetoprod.log")
+    prod_store_bucket = env_set("INPUT_GCP_PROD_STORAGE_BUCKET", "aap-aoc-code-assets")
 
-    success = moveS3s(snapshot_path, snapshot_date, dev_region, prod_region, prod_s3_bucket)
+    success = gatherAssets(snapshot_path, snapshot_date)
 
     # Reorient stdout back to normal, dump out what it was, and return value to action
     sys.stdout = tmp_stdout
