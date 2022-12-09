@@ -15,6 +15,9 @@ inputs:
     description: "The GCP storage bucket for production zip files"
     required: true
 
+outputs:
+  log:
+    description: "Transcript of promotion actions"
 runs: 
   image: Dockerfile
   using: docker
