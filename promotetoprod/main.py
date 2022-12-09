@@ -3,6 +3,11 @@ import json
 from io import StringIO
 import sys
 import base64
+import subprocess
+
+from google.api_core.extended_operation import ExtendedOperation
+from google.cloud import compute_v1
+from google.cloud import storage
 
 
 def env_set(env_var, default):
@@ -17,7 +22,7 @@ def env_set(env_var, default):
         return default
 
 
-def gatherAssets(snapshot_path, snapshot_date):
+def copyAssets(snapshot_path, snapshot_date, prod_store_path):
     return_code = False
     resource_map = {}
     image_name = ""
@@ -67,8 +72,28 @@ def gatherAssets(snapshot_path, snapshot_date):
             print("No object storage exists for sub-build {}.".format(dirname));
         if (account_destined_for != account_copied_to) & (image_name != ""):
             print("Copying sub-build {} image {} to {} since account_destined_for is {} and account_copied_to is {}.".format(dirname,image_name, account_destined_for,account_copied_to,account_destined_for))
+            print("gcloud compute --project={} images create {} --source-image={} --source-image-project={}".format(account_destined_for, image_name, image_name, account_copied_to))
+            process = subprocess.run(["gcloud", 
+                "compute", 
+                "--project={}".format(account_destined_for), 
+                "images", 
+                "create", 
+                "{}".format(image_name), 
+                "--source-image={}".format(image_name), 
+                "--source-image-project={}".format(account_copied_to)],
+                capture_output=True, 
+                text=True)
+            if (process.stdout != ''): print(process.stdout)
+            if (process.stderr != ''): print(process.stderr)
         if (account_destined_for != account_copied_to) & (object_storage != ""):
             print("Copying sub-build {} zip   {} to {}".format(dirname,object_storage, account_destined_for))
+            head, tail = os.path.split(object_storage)
+            print("gsutil cp {} gs://{}/{}".format(object_storage, prod_store_path, tail))
+            process = subprocess.run(["gsutil", "cp", "{}".format(object_storage), "gs://{}/{}".format(prod_store_path, tail)], capture_output=True, text=True)
+            if (process.stdout != ''): print(process.stdout)
+            if (process.stderr != ''): print(process.stderr)
+
+
         return_code = True
     return return_code
 
@@ -80,18 +105,18 @@ def main():
     string_stdout = StringIO()
     sys.stdout = string_stdout
 
-    # Assumes a credentials file has been laid down thusly
-    #os.environ["AWS_SHARED_CREDENTIALS_FILE"] = "{}/.aws/credentials".format(os.getcwd())
-
     # Prime the stdout pump - we seem to lose the first line otherwise
     print()
 
     snapshot_path = env_set("INPUT_SNAPSHOT_PATH", "")
     snapshot_date = env_set("INPUT_SNAPSHOT_DATE", "")
     log_filename = env_set("INPUT_LOG_FILENAME", "promotetoprod.log")
-    prod_store_bucket = env_set("INPUT_GCP_PROD_STORAGE_BUCKET", "aap-aoc-code-assets")
+    prod_store_path = env_set("INPUT_GCP_PROD_STORAGE_PATH", "aap-aoc-code-assets")
 
-    success = gatherAssets(snapshot_path, snapshot_date)
+    process = subprocess.run(["gcloud", "auth", "list"], capture_output=True, text=True)
+    if (process.stdout != ''): print(process.stdout)
+    if (process.stderr != ''): print(process.stderr)
+    success = copyAssets(snapshot_path, snapshot_date, prod_store_path)
 
     # Reorient stdout back to normal, dump out what it was, and return value to action
     sys.stdout = tmp_stdout
